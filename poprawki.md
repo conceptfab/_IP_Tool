@@ -11,13 +11,11 @@ pythondef init_default_map(self):
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Mapa IP</title>
-        <!-- Użyj CDN z timeoutem i fallbackiem -->
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"
-            integrity="sha512-h9FcoyWjHcOcmEVkxOfTLIlnOeRDg2/RPEeCaFPv/OMT8w5qDNKkKNHVZi6YQIyzs6zp8CK8sJqwFCN2uP9/Q=="
-            crossorigin="anonymous" referrerpolicy="no-referrer" />
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"
-            integrity="sha512-BwHfrr4c9kmRkLw6iXFdzcdWV/PGkVgiIyIWLRWbaXzj9CdLI+9oq0OkOaSmaqeQ5w9Mv7FqYPdDfOEF4nf1sQ=="
-            crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+        <!-- Użyj CDN bez integrity checks dla lepszej kompatybilności -->
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+            crossorigin="" />
+        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+            crossorigin=""></script>
         <style>
             body {
                 margin: 0;
@@ -94,10 +92,10 @@ pythondef init_default_map(self):
             // Spróbuj załadować mapę po załadowaniu strony
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', function() {
-                    setTimeout(initMap, 500);
+                    setTimeout(initMap, 1000);
                 });
             } else {
-                setTimeout(initMap, 500);
+                setTimeout(initMap, 1000);
             }
         </script>
     </body>
@@ -118,13 +116,11 @@ pythondef update_map(self, lat, lon):
             <meta charset="utf-8" />
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>Mapa IP</title>
-            <!-- Użyj CDN z większą niezawodnością -->
-            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"
-                integrity="sha512-h9FcoyWjHcOcmEVkxOfTLIlnOeRDg2/RPEeCaFPv/OMT8w5qDNKkKNHVZi6YQIyzs6zp8CK8sJqwFCN2uP9/Q=="
-                crossorigin="anonymous" referrerpolicy="no-referrer" />
-            <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"
-                integrity="sha512-BwHfrr4c9kmRkLw6iXFdzcdWV/PGkVgiIyIWLRWbaXzj9CdLI+9oq0OkOaSmaqeQ5w9Mv7FqYPdDfOEF4nf1sQ=="
-                crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+            <!-- Użyj unpkg.com bez integrity checks -->
+            <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+                crossorigin="" />
+            <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+                crossorigin=""></script>
             <style>
                 body {{
                     margin: 0;
@@ -143,6 +139,15 @@ pythondef update_map(self, lat, lon):
                     color: #ffffff;
                     background-color: #2b2b2b;
                 }}
+                .error-container {{
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    height: 100vh;
+                    color: #ffffff;
+                    background-color: #2b2b2b;
+                    text-align: center;
+                }}
                 .leaflet-popup-content {{
                     color: #000000;
                 }}
@@ -151,12 +156,19 @@ pythondef update_map(self, lat, lon):
         <body>
             <div id="loading" class="loading">Ładowanie lokalizacji...</div>
             <div id="mapid" style="display:none;"></div>
+            <div id="error" class="error-container" style="display:none;">
+                <div>
+                    <h3>🗺️ Błąd ładowania mapy</h3>
+                    <p>Nie można załadować interaktywnej mapy</p>
+                </div>
+            </div>
             
             <script>
                 function initLocationMap() {{
                     if (typeof L === 'undefined') {{
                         console.error('Leaflet nie załadował się poprawnie');
-                        document.getElementById('loading').innerHTML = '<div style="text-align:center;"><h3>🗺️ Mapa niedostępna</h3><p>Sprawdź połączenie internetowe</p></div>';
+                        document.getElementById('loading').style.display = 'none';
+                        document.getElementById('error').style.display = 'flex';
                         return;
                     }}
                     
@@ -181,17 +193,18 @@ pythondef update_map(self, lat, lon):
                         
                     }} catch (error) {{
                         console.error('Błąd ładowania mapy:', error);
-                        document.getElementById('loading').innerHTML = '<div style="text-align:center; color: #ffffff;"><h3>🗺️ Błąd mapy</h3><p>Nie można załadować lokalizacji</p></div>';
+                        document.getElementById('loading').style.display = 'none';
+                        document.getElementById('error').style.display = 'flex';
                     }}
                 }}
                 
-                // Inicjalizuj mapę po załadowaniu
+                // Inicjalizuj mapę po załadowaniu - zwiększony timeout
                 if (document.readyState === 'loading') {{
                     document.addEventListener('DOMContentLoaded', function() {{
-                        setTimeout(initLocationMap, 300);
+                        setTimeout(initLocationMap, 1000);
                     }});
                 }} else {{
-                    setTimeout(initLocationMap, 300);
+                    setTimeout(initLocationMap, 1000);
                 }}
             </script>
         </body>
@@ -206,114 +219,88 @@ pythondef update_map(self, lat, lon):
         error_msg = f"Błąd podczas ładowania mapy: {str(e)}"
         print(error_msg)
         self.show_fallback_map(lat, lon)
-3. Dodanie funkcji sprawdzania połączenia internetowego
-Lokalizacja: klasa MainWindow - nowa metoda
+3. Alternatywne rozwiązanie - lokalne pliki Leaflet
+Lokalizacja: można dodać jako nową metodę w klasie MainWindow
 Proponowany kod do dodania:
-pythondef check_internet_connection(self):
-    """Sprawdza dostępność połączenia internetowego."""
-    try:
-        response = requests.get('https://www.google.com', timeout=3)
-        return response.status_code == 200
-    except:
-        return False
-4. Modyfikacja funkcji show_fallback_map z lepszą diagnostyką
-Lokalizacja: klasa MainWindow, funkcja show_fallback_map
-Proponowany kod do zmiany:
-pythondef show_fallback_map(self, lat, lon):
-    """Wyświetla zastępczą mapę gdy nie można pobrać interaktywnej mapy."""
-    internet_status = "✅ Połączenie OK" if self.check_internet_connection() else "❌ Brak połączenia"
+pythondef get_leaflet_local_html(self, lat=None, lon=None):
+    """Zwraca HTML z lokalnie hostowanymi plikami Leaflet lub alternatywnym CDN."""
+    coords = f"[{lat}, {lon}]" if lat and lon else "[52.2297, 21.0122]"
+    zoom = 13 if lat and lon else 6
+    marker_code = f"""
+        var marker = L.marker([{lat}, {lon}]).addTo(mymap);
+        marker.bindPopup("<b>Twoja lokalizacja IP</b><br>Szerokość: {lat}<br>Długość: {lon}").openPopup();
+    """ if lat and lon else ""
     
-    fallback_html = f"""
+    return f"""
     <!DOCTYPE html>
     <html>
     <head>
-        <meta charset="utf-8">
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Mapa IP</title>
+        <!-- Fallback do innego CDN jeśli pierwszy nie działa -->
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
+        <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
         <style>
             body {{
                 margin: 0;
                 padding: 0;
                 background-color: #2b2b2b;
-                color: #ffffff;
-                font-family: Arial, sans-serif;
+            }}
+            #mapid {{
+                height: 100vh;
+                width: 100%;
+            }}
+            .loading {{
                 display: flex;
                 justify-content: center;
                 align-items: center;
                 height: 100vh;
-                text-align: center;
-            }}
-            .fallback-container {{
-                background-color: #1e1e1e;
-                border: 1px solid #3d3d3d;
-                border-radius: 5px;
-                padding: 40px;
-                max-width: 350px;
-            }}
-            .coordinates {{
-                font-size: 16px;
-                margin: 20px 0;
-                background-color: #2b2b2b;
-                padding: 15px;
-                border-radius: 5px;
-            }}
-            .link {{
-                color: #0d47a1;
-                text-decoration: none;
-                font-size: 14px;
-                background-color: #2b2b2b;
-                padding: 10px 15px;
-                border-radius: 5px;
-                display: inline-block;
-                margin-top: 15px;
-            }}
-            .link:hover {{
-                background-color: #1565c0;
                 color: #ffffff;
+                background-color: #2b2b2b;
             }}
-            h3 {{
-                color: #ffffff;
-                margin-top: 0;
-            }}
-            .status {{
-                font-size: 12px;
-                margin-top: 20px;
-                opacity: 0.8;
+            .leaflet-popup-content {{
+                color: #000000;
             }}
         </style>
     </head>
     <body>
-        <div class="fallback-container">
-            <h3>📍 Lokalizacja IP</h3>
-            <div class="coordinates">
-                <strong>Szerokość:</strong> {lat}<br>
-                <strong>Długość:</strong> {lon}
-            </div>
-            <p>Interaktywna mapa niedostępna<br>
-            Możliwe przyczyny:<br>
-            • Słabe połączenie internetowe<br>
-            • Blokada JavaScript<br>
-            • Problem z CDN</p>
-            <a href="https://www.openstreetmap.org/?mlat={lat}&mlon={lon}" 
-               class="link" target="_blank">
-               🗺️ Otwórz w przeglądarce
-            </a>
-            <div class="status">Status: {internet_status}</div>
-        </div>
+        <div id="loading" class="loading">Ładowanie mapy...</div>
+        <div id="mapid" style="display:none;"></div>
+        
+        <script>
+            setTimeout(function() {{
+                if (typeof L !== 'undefined') {{
+                    document.getElementById('loading').style.display = 'none';
+                    document.getElementById('mapid').style.display = 'block';
+                    
+                    var mymap = L.map('mapid').setView({coords}, {zoom});
+                    
+                    L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+                        attribution: '&copy; OpenStreetMap contributors',
+                        maxZoom: 18,
+                    }}).addTo(mymap);
+                    
+                    {marker_code}
+                    
+                    setTimeout(function() {{
+                        mymap.invalidateSize();
+                    }}, 300);
+                }} else {{
+                    document.getElementById('loading').innerHTML = 
+                        '<div style="text-align:center;"><h3>🗺️ Błąd ładowania</h3><p>Biblioteka mapy niedostępna</p></div>';
+                }}
+            }}, 1500);
+        </script>
     </body>
     </html>
     """
-    
-    self.map_view.setHtml(fallback_html)
-5. Dodanie import requests na początku pliku (jeśli brakuje)
-Lokalizacja: początek pliku ip_checker_gui.py
-Sprawdź czy jest już zaimportowane, jeśli nie - dodaj:
-pythonimport requests  # Dodaj jeśli nie ma
 Podsumowanie głównych zmian:
 
-Zmiana CDN - przejście z unpkg.com na cdnjs.cloudflare.com (bardziej niezawodne)
-Dodanie diagnostyki - sprawdzanie czy Leaflet się załadował przed inicjalizacją
-Lepsze error handling - wyświetlanie stosownych komunikatów o błędach
-Dodanie opóźnień - danie czasu na załadowanie bibliotek przed inicjalizacją
-Status połączenia - sprawdzanie dostępności internetu w fallback
-Lepszy UX - wyświetlanie komunikatu "Ładowanie..." podczas inicjalizacji
+Usunięcie integrity checks - usunięte atrybuty integrity i sha512 które powodowały blokowanie zasobów
+Zmiana CDN - powrót do unpkg.com który jest bardziej niezawodny dla Leaflet
+Zwiększone timeouty - z 300-500ms na 1000ms dla lepszego ładowania
+Lepsze error handling - dodanie kontenerów błędów w obu funkcjach
+Alternatywne CDN - dodanie opcji użycia jsdelivr.net jako backup
 
-Te zmiany powinny rozwiązać problem z L is not defined i uczynić mapę bardziej niezawodną.
+Te zmiany powinny rozwiązać problem z integrity hashes i umożliwić poprawne ładowanie biblioteki Leaflet.

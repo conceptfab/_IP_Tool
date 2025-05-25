@@ -338,13 +338,11 @@ class MainWindow(QMainWindow):
             <meta charset="utf-8" />
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>Mapa IP</title>
-            <!-- Użyj CDN z timeoutem i fallbackiem -->
-            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"
-                integrity="sha512-h9FcoyWjHcOcmEVkxOfTLIlnOeRDg2/RPEeCaFPv/OMT8w5qDNKkKNHVZi6YQIyzs6zp8CK8sJqwFCN2uP9/Q=="
-                crossorigin="anonymous" referrerpolicy="no-referrer" />
-            <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"
-                integrity="sha512-BwHfrr4c9kmRkLw6iXFdzcdWV/PGkVgiIyIWLRWbaXzj9CdLI+9oq0OkOaSmaqeQ5w9Mv7FqYPdDfOEF4nf1sQ=="
-                crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+            <!-- Użyj CDN bez integrity checks dla lepszej kompatybilności -->
+            <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+                crossorigin="" />
+            <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+                crossorigin=""></script>
             <style>
                 body {
                     margin: 0;
@@ -421,10 +419,10 @@ class MainWindow(QMainWindow):
                 // Spróbuj załadować mapę po załadowaniu strony
                 if (document.readyState === 'loading') {
                     document.addEventListener('DOMContentLoaded', function() {
-                        setTimeout(initMap, 500);
+                        setTimeout(initMap, 1000);
                     });
                 } else {
-                    setTimeout(initMap, 500);
+                    setTimeout(initMap, 1000);
                 }
             </script>
         </body>
@@ -443,13 +441,11 @@ class MainWindow(QMainWindow):
                 <meta charset="utf-8" />
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 <title>Mapa IP</title>
-                <!-- Użyj CDN z większą niezawodnością -->
-                <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"
-                    integrity="sha512-h9FcoyWjHcOcmEVkxOfTLIlnOeRDg2/RPEeCaFPv/OMT8w5qDNKkKNHVZi6YQIyzs6zp8CK8sJqwFCN2uP9/Q=="
-                    crossorigin="anonymous" referrerpolicy="no-referrer" />
-                <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"
-                    integrity="sha512-BwHfrr4c9kmRkLw6iXFdzcdWV/PGkVgiIyIWLRWbaXzj9CdLI+9oq0OkOaSmaqeQ5w9Mv7FqYPdDfOEF4nf1sQ=="
-                    crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+                <!-- Użyj unpkg.com bez integrity checks -->
+                <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+                    crossorigin="" />
+                <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+                    crossorigin=""></script>
                 <style>
                     body {{
                         margin: 0;
@@ -468,6 +464,15 @@ class MainWindow(QMainWindow):
                         color: #ffffff;
                         background-color: #2b2b2b;
                     }}
+                    .error-container {{
+                        display: flex;
+                        justify-content: center;
+                        align-items: center;
+                        height: 100vh;
+                        color: #ffffff;
+                        background-color: #2b2b2b;
+                        text-align: center;
+                    }}
                     .leaflet-popup-content {{
                         color: #000000;
                     }}
@@ -476,12 +481,19 @@ class MainWindow(QMainWindow):
             <body>
                 <div id="loading" class="loading">Ładowanie lokalizacji...</div>
                 <div id="mapid" style="display:none;"></div>
+                <div id="error" class="error-container" style="display:none;">
+                    <div>
+                        <h3>🗺️ Błąd ładowania mapy</h3>
+                        <p>Nie można załadować interaktywnej mapy</p>
+                    </div>
+                </div>
                 
                 <script>
                     function initLocationMap() {{
                         if (typeof L === 'undefined') {{
                             console.error('Leaflet nie załadował się poprawnie');
-                            document.getElementById('loading').innerHTML = '<div style="text-align:center;"><h3>🗺️ Mapa niedostępna</h3><p>Sprawdź połączenie internetowe</p></div>';
+                            document.getElementById('loading').style.display = 'none';
+                            document.getElementById('error').style.display = 'flex';
                             return;
                         }}
                         
@@ -506,17 +518,18 @@ class MainWindow(QMainWindow):
                             
                         }} catch (error) {{
                             console.error('Błąd ładowania mapy:', error);
-                            document.getElementById('loading').innerHTML = '<div style="text-align:center; color: #ffffff;"><h3>🗺️ Błąd mapy</h3><p>Nie można załadować lokalizacji</p></div>';
+                            document.getElementById('loading').style.display = 'none';
+                            document.getElementById('error').style.display = 'flex';
                         }}
                     }}
                     
-                    // Inicjalizuj mapę po załadowaniu
+                    // Inicjalizuj mapę po załadowaniu - zwiększony timeout
                     if (document.readyState === 'loading') {{
                         document.addEventListener('DOMContentLoaded', function() {{
-                            setTimeout(initLocationMap, 300);
+                            setTimeout(initLocationMap, 1000);
                         }});
                     }} else {{
-                        setTimeout(initLocationMap, 300);
+                        setTimeout(initLocationMap, 1000);
                     }}
                 </script>
             </body>
@@ -687,6 +700,84 @@ ISP: {data.get('org', 'Nieznany')}"""
             return response.status_code == 200
         except:
             return False
+
+    def get_leaflet_local_html(self, lat=None, lon=None):
+        """Zwraca HTML z lokalnie hostowanymi plikami Leaflet lub alternatywnym CDN."""
+        coords = f"[{lat}, {lon}]" if lat and lon else "[52.2297, 21.0122]"
+        zoom = 13 if lat and lon else 6
+        marker_code = (
+            f"""
+            var marker = L.marker([{lat}, {lon}]).addTo(mymap);
+            marker.bindPopup("<b>Twoja lokalizacja IP</b><br>Szerokość: {lat}<br>Długość: {lon}").openPopup();
+        """
+            if lat and lon
+            else ""
+        )
+
+        return f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Mapa IP</title>
+            <!-- Fallback do innego CDN jeśli pierwszy nie działa -->
+            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
+            <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+            <style>
+                body {{
+                    margin: 0;
+                    padding: 0;
+                    background-color: #2b2b2b;
+                }}
+                #mapid {{
+                    height: 100vh;
+                    width: 100%;
+                }}
+                .loading {{
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    height: 100vh;
+                    color: #ffffff;
+                    background-color: #2b2b2b;
+                }}
+                .leaflet-popup-content {{
+                    color: #000000;
+                }}
+            </style>
+        </head>
+        <body>
+            <div id="loading" class="loading">Ładowanie mapy...</div>
+            <div id="mapid" style="display:none;"></div>
+            
+            <script>
+                setTimeout(function() {{
+                    if (typeof L !== 'undefined') {{
+                        document.getElementById('loading').style.display = 'none';
+                        document.getElementById('mapid').style.display = 'block';
+                        
+                        var mymap = L.map('mapid').setView({coords}, {zoom});
+                        
+                        L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+                            attribution: '&copy; OpenStreetMap contributors',
+                            maxZoom: 18,
+                        }}).addTo(mymap);
+                        
+                        {marker_code}
+                        
+                        setTimeout(function() {{
+                            mymap.invalidateSize();
+                        }}, 300);
+                    }} else {{
+                        document.getElementById('loading').innerHTML = 
+                            '<div style="text-align:center;"><h3>🗺️ Błąd ładowania</h3><p>Biblioteka mapy niedostępna</p></div>';
+                    }}
+                }}, 1500);
+            </script>
+        </body>
+        </html>
+        """
 
 
 if __name__ == "__main__":
