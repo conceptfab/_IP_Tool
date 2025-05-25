@@ -1,5 +1,4 @@
 import json
-import math
 import sys
 from collections import defaultdict
 from datetime import datetime
@@ -7,14 +6,7 @@ from pathlib import Path
 
 import requests
 from PyQt6.QtCore import Qt, QThread, QUrl, pyqtSignal
-from PyQt6.QtGui import (
-    QColor,
-    QFont,
-    QPalette,
-    QPixmap,
-    QSyntaxHighlighter,
-    QTextCharFormat,
-)
+from PyQt6.QtGui import QColor, QFont, QPalette, QSyntaxHighlighter, QTextCharFormat
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import (
     QApplication,
@@ -214,7 +206,7 @@ class MainWindow(QMainWindow):
         """
         )
 
-        # Główny widget i layout
+        # Główny widget i layout - zwiększ minimalny rozmiar
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
         main_layout = QHBoxLayout(main_widget)
@@ -248,23 +240,26 @@ class MainWindow(QMainWindow):
         self.result_text.setReadOnly(True)
         self.result_text.setMinimumHeight(200)
         results_layout.addWidget(self.result_text)
-        splitter.addWidget(results_widget)
 
         # Dolna część - historia
         history_widget = QWidget()
         history_layout = QVBoxLayout(history_widget)
-        history_label = QLabel("Historia wyszukiwań:")
-        history_layout.addWidget(history_label)
+        history_title = QLabel("Historia sprawdzeń")
+        history_title.setStyleSheet(
+            "font-size: 18px; font-weight: bold; margin-bottom: 10px;"
+        )
+        history_layout.addWidget(history_title)
         self.history_text = QTextEdit()
         self.history_text.setReadOnly(True)
-        self.history_text.setMinimumHeight(150)
         history_layout.addWidget(self.history_text)
-        splitter.addWidget(history_widget)
 
-        # Status
-        self.status_label = QLabel("")
-        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        left_layout.addWidget(self.status_label)
+        # Inicjalizacja highlightera
+        self.highlighter = IPHighlighter(self.history_text.document())
+
+        # Dodaj widgety do splittera
+        splitter.addWidget(results_widget)
+        splitter.addWidget(history_widget)
+        splitter.setSizes([400, 200])
 
         # Dodaj lewą stronę do głównego layoutu
         main_layout.addWidget(left_widget, stretch=2)
@@ -282,25 +277,25 @@ class MainWindow(QMainWindow):
         )
         right_layout.addWidget(map_title)
 
-        # Mapa
-        self.map_label = QLabel()
-        self.map_label.setMinimumSize(400, 400)
-        self.map_label.setStyleSheet(
+        # Interaktywna mapa zamiast statycznego QLabel
+        self.map_view = QWebEngineView()
+        self.map_view.setMinimumSize(400, 400)
+        self.map_view.setStyleSheet(
             """
-            QLabel {
+            QWebEngineView {
                 background-color: #2b2b2b;
                 border: 1px solid #3d3d3d;
                 border-radius: 5px;
             }
         """
         )
-        right_layout.addWidget(self.map_label)
+        right_layout.addWidget(self.map_view)
 
-        # Dodaj prawą stronę do głównego layoutu
-        main_layout.addWidget(right_widget, stretch=3)
+        # Dodaj prawą stronę do głównego layoutu - zwiększ stretch dla lepszego dopasowania
+        main_layout.addWidget(right_widget, stretch=4)
 
-        # Inicjalizacja highlightera
-        self.highlighter = IPHighlighter(self.history_text.document())
+        # Inicjalizacja domyślnej mapy
+        self.init_default_map()
 
         # Wyświetl wczytaną historię
         self.display_history()
@@ -334,99 +329,117 @@ class MainWindow(QMainWindow):
             # Ustaw kolor dla IP
             self.highlighter.set_ip_color(entry["ip"])
 
+    def init_default_map(self):
+        """Inicjalizuje domyślną mapę świata."""
+        default_map_html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Mapa IP</title>
+            <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+                integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+                crossorigin=""/>
+            <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+                integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+                crossorigin=""></script>
+            <style>
+                body {
+                    margin: 0;
+                    padding: 0;
+                    background-color: #2b2b2b;
+                }
+                #mapid {
+                    height: 100vh;
+                    width: 100%;
+                }
+            </style>
+        </head>
+        <body>
+            <div id="mapid"></div>
+            <script>
+                var mymap = L.map('mapid').setView([52.2297, 21.0122], 6); // Warszawa jako domyślna
+                
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+                    maxZoom: 18,
+                }).addTo(mymap);
+                
+                setTimeout(function() {
+                    mymap.invalidateSize();
+                }, 100);
+            </script>
+        </body>
+        </html>
+        """
+        self.map_view.setHtml(default_map_html)
+
     def update_map(self, lat, lon):
         """Aktualizuje mapę z nowymi współrzędnymi."""
-        temp_path = Path("temp_map.png")  # Zdefiniuj na początku
-
         try:
-            # Lista alternatywnych serwisów map statycznych
-            map_services = [
-                f"https://api.mapbox.com/styles/v1/mapbox/streets-v11/static/pin-s+red({lon},{lat})/{lon},{lat},14,0/400x400?access_token=YOUR_TOKEN",
-                f"https://maps.googleapis.com/maps/api/staticmap?center={lat},{lon}&zoom=14&size=400x400&markers=color:red|{lat},{lon}&key=YOUR_API_KEY",
-                f"https://tile.openstreetmap.org/{14}/{int((float(lon) + 180) * 2**14 / 360)}/{int((1 - math.log(math.tan(math.radians(float(lat))) + 1 / math.cos(math.radians(float(lat)))) / math.pi) / 2 * 2**14)}.png",
-            ]
-
-            # Spróbuj z prostym obrazem zastępczym jako fallback
-            fallback_map_html = f"""
+            # Stwórz interaktywną mapę HTML z OpenStreetMap
+            map_html = f"""
+            <!DOCTYPE html>
             <html>
-            <body style="margin:0; padding:0; background:#2b2b2b;">
-                <div style="width:400px; height:400px; background:#1e1e1e; border:1px solid #3d3d3d; 
-                            display:flex; flex-direction:column; justify-content:center; align-items:center; 
-                            color:#ffffff; font-family:Arial;">
-                    <h3>Lokalizacja</h3>
-                    <p>Szerokość: {lat}</p>
-                    <p>Długość: {lon}</p>
-                    <p style="font-size:12px; color:#aaa;">Mapa niedostępna</p>
-                    <a href="https://www.openstreetmap.org/?mlat={lat}&mlon={lon}" 
-                       style="color:#0d47a1; text-decoration:none;">
-                       Otwórz w OpenStreetMap
-                    </a>
-                </div>
+            <head>
+                <meta charset="utf-8" />
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Mapa IP</title>
+                <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+                    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+                    crossorigin=""/>
+                <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+                    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+                    crossorigin=""></script>
+                <style>
+                    body {{
+                        margin: 0;
+                        padding: 0;
+                        background-color: #2b2b2b;
+                    }}
+                    #mapid {{
+                        height: 100vh;
+                        width: 100%;
+                    }}
+                    .leaflet-control-container .leaflet-routing-container-hide {{
+                        display: none;
+                    }}
+                </style>
+            </head>
+            <body>
+                <div id="mapid"></div>
+                <script>
+                    var mymap = L.map('mapid').setView([{lat}, {lon}], 13);
+                    
+                    L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+                        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+                        maxZoom: 18,
+                    }}).addTo(mymap);
+                    
+                    var marker = L.marker([{lat}, {lon}]).addTo(mymap);
+                    marker.bindPopup("<b>Twoja lokalizacja IP</b><br>Szerokość: {lat}<br>Długość: {lon}").openPopup();
+                    
+                    // Dostosuj rozmiar mapy po załadowaniu
+                    setTimeout(function() {{
+                        mymap.invalidateSize();
+                    }}, 100);
+                </script>
             </body>
             </html>
             """
 
-            # Spróbuj pobrać mapę z OpenStreetMap Tile Server (alternatywne podejście)
-            zoom = 14
-            x = int((float(lon) + 180.0) / 360.0 * (1 << zoom))
-            y = int(
-                (1.0 - math.asinh(math.tan(math.radians(float(lat)))) / math.pi)
-                / 2.0
-                * (1 << zoom)
-            )
+            # Załaduj mapę HTML do QWebEngineView
+            self.map_view.setHtml(map_html)
+            print("Interaktywna mapa załadowana pomyślnie")
 
-            tile_url = f"https://tile.openstreetmap.org/{zoom}/{x}/{y}.png"
-
-            print(f"Próba pobrania kafelka mapy z URL: {tile_url}")
-            response = requests.get(
-                tile_url, headers={"User-Agent": "IP_Checker/1.0"}, timeout=10
-            )
-
-            if response.status_code == 200:
-                # Zapisz obraz tymczasowo
-                with open(temp_path, "wb") as f:
-                    f.write(response.content)
-
-                # Wyświetl obraz
-                pixmap = QPixmap(str(temp_path))
-                if not pixmap.isNull():
-                    # Przeskaluj obraz do 400x400
-                    scaled_pixmap = pixmap.scaled(
-                        400, 400, Qt.AspectRatioMode.KeepAspectRatio
-                    )
-                    self.map_label.setPixmap(scaled_pixmap)
-                    print("Mapa załadowana pomyślnie")
-                else:
-                    self.show_fallback_map(lat, lon)
-            else:
-                print(
-                    f"Nie udało się pobrać kafelka mapy (HTTP {response.status_code})"
-                )
-                self.show_fallback_map(lat, lon)
-
-            # Pobierz informacje o lokalizacji
-            self.get_location_info(lat, lon)
-
-        except requests.exceptions.RequestException as e:
-            error_msg = f"Błąd sieci: {str(e)}"
-            print(error_msg)
-            self.show_fallback_map(lat, lon)
         except Exception as e:
             error_msg = f"Błąd podczas ładowania mapy: {str(e)}"
             print(error_msg)
             self.show_fallback_map(lat, lon)
-        finally:
-            # Spróbuj usunąć tymczasowy plik
-            try:
-                if temp_path.exists():
-                    temp_path.unlink()
-                    print("Tymczasowy plik mapy usunięty")
-            except Exception as e:
-                print(f"Nie udało się usunąć tymczasowego pliku: {e}")
 
     def check_ip(self):
         self.check_button.setEnabled(False)
-        self.status_label.setText("Sprawdzanie...")
         self.result_text.clear()
 
         self.thread = IPCheckerThread()
@@ -454,7 +467,6 @@ ISP: {data.get('org', 'Nieznany')}"""
             self.update_map(lat, lon)
 
         self.result_text.setText(result)
-        self.status_label.setText("Gotowe!")
         self.check_button.setEnabled(True)
 
         # Dodanie do historii
@@ -483,54 +495,72 @@ ISP: {data.get('org', 'Nieznany')}"""
 
     def show_error(self, error_msg):
         self.result_text.setText(f"Błąd: {error_msg}")
-        self.status_label.setText("Wystąpił błąd")
         self.check_button.setEnabled(True)
 
     def show_fallback_map(self, lat, lon):
-        """Wyświetla zastępczą mapę gdy nie można pobrać obrazu."""
-        fallback_text = f"""Lokalizacja:
-        
-Szerokość: {lat}
-Długość: {lon}
-
-Mapa niedostępna
-Sprawdź połączenie internetowe
-
-Otwórz w przeglądarce:
-https://www.openstreetmap.org/?mlat={lat}&mlon={lon}"""
-
-        self.map_label.setText(fallback_text)
-        self.map_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.map_label.setStyleSheet(
-            """
-            QLabel {
-                background-color: #1e1e1e;
-                color: #ffffff;
-                border: 1px solid #3d3d3d;
-                border-radius: 5px;
-                padding: 20px;
-                font-size: 12px;
-            }
+        """Wyświetla zastępczą mapę gdy nie można pobrać interaktywnej mapy."""
+        fallback_html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <style>
+                body {{
+                    margin: 0;
+                    padding: 0;
+                    background-color: #2b2b2b;
+                    color: #ffffff;
+                    font-family: Arial, sans-serif;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    height: 100vh;
+                    text-align: center;
+                }}
+                .fallback-container {{
+                    background-color: #1e1e1e;
+                    border: 1px solid #3d3d3d;
+                    border-radius: 5px;
+                    padding: 40px;
+                    max-width: 300px;
+                }}
+                .coordinates {{
+                    font-size: 16px;
+                    margin: 20px 0;
+                }}
+                .link {{
+                    color: #0d47a1;
+                    text-decoration: none;
+                    font-size: 14px;
+                }}
+                .link:hover {{
+                    text-decoration: underline;
+                }}
+                h3 {{
+                    color: #ffffff;
+                    margin-top: 0;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="fallback-container">
+                <h3>📍 Lokalizacja</h3>
+                <div class="coordinates">
+                    <strong>Szerokość:</strong> {lat}<br>
+                    <strong>Długość:</strong> {lon}
+                </div>
+                <p>Mapa niedostępna<br>
+                Sprawdź połączenie internetowe</p>
+                <a href="https://www.openstreetmap.org/?mlat={lat}&mlon={lon}" 
+                   class="link" target="_blank">
+                   🗺️ Otwórz w OpenStreetMap
+                </a>
+            </div>
+        </body>
+        </html>
         """
-        )
 
-    def get_location_info(self, lat, lon):
-        """Pobiera dodatkowe informacje o lokalizacji."""
-        try:
-            url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}"
-            response = requests.get(
-                url, headers={"User-Agent": "IP_Checker/1.0"}, timeout=5
-            )
-            if response.status_code == 200:
-                location_data = response.json()
-                display_name = location_data.get("display_name", "Nieznana lokalizacja")
-                print(f"Szczegółowa lokalizacja: {display_name}")
-            else:
-                print(
-                    f"Nie udało się pobrać szczegółów lokalizacji (HTTP {response.status_code})"
-                )
-        except Exception as e:
-            print(f"Błąd przy pobieraniu informacji o lokalizacji: {e}")
+        self.map_view.setHtml(fallback_html)
 
 
 if __name__ == "__main__":
