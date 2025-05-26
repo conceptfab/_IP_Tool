@@ -4,6 +4,63 @@ import os
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
+import requests
+from urllib.parse import urlparse
+import socket
+import re
+
+# Konfiguracja serwisów
+CONFIG = {
+    'ip_services': [
+        ("https://api.ipify.org?format=json", "json"),
+        ("https://ifconfig.me/ip", "text"),
+        ("https://icanhazip.com", "text")
+    ],
+    'info_services': [
+        "https://ipinfo.io/{ip}/json",
+        "https://ipapi.co/{ip}/json/",
+        "https://ip-api.com/json/{ip}"
+    ],
+    'timeout': 5,
+    'max_retries': 3,
+    'cache_timeout': 3600,  # 1 godzina
+    'proxy': None  # Możliwe do konfiguracji
+}
+
+def validate_url(url):
+    """Walidacja URL"""
+    try:
+        # Sprawdzenie podstawowej struktury URL
+        result = urlparse(url)
+        if not all([result.scheme, result.netloc]):
+            return False
+            
+        # Sprawdzenie poprawności schematu
+        if result.scheme not in ['http', 'https']:
+            return False
+            
+        # Sprawdzenie poprawności hosta
+        if not re.match(r'^[a-zA-Z0-9.-]+$', result.netloc):
+            return False
+            
+        return True
+    except:
+        return False
+
+def validate_ip(ip):
+    """Walidacja adresu IP"""
+    try:
+        socket.inet_aton(ip)
+        return True
+    except socket.error:
+        return False
+
+import json
+import sys
+import os
+from collections import defaultdict
+from datetime import datetime
+from pathlib import Path
 
 import requests
 from PyQt6.QtCore import Qt, QThread, QUrl, pyqtSignal
@@ -25,6 +82,7 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QPushButton,
     QSplitter,
+    QProgressBar,
     QTextBrowser,
     QTextEdit,
     QVBoxLayout,
@@ -37,13 +95,36 @@ class IPHighlighter(QSyntaxHighlighter):
         super().__init__(parent)
         self.ip_colors = defaultdict(lambda: QColor(255, 255, 255))
         self.color_index = 0
+        # Paleta kolorów z większą różnorodnością
         self.colors = [
-            QColor(255, 200, 200),
-            QColor(200, 255, 200),
-            QColor(200, 200, 255),
-            QColor(255, 255, 200),
-            QColor(255, 200, 255),
-            QColor(200, 255, 255),
+            # Czerwone
+            QColor(255, 182, 193),  # Hot Pink
+            QColor(255, 160, 122),  # Light Salmon
+            QColor(255, 105, 180),  # Pink
+            # Zielone
+            QColor(144, 238, 144),  # Light Green
+            QColor(127, 255, 0),    # Spring Green
+            QColor(173, 255, 47),   # Green Yellow
+            # Niebieskie
+            QColor(135, 206, 250),  # Light Sky Blue
+            QColor(173, 216, 230),  # Light Blue
+            QColor(138, 43, 226),   # Blue Violet
+            # Pomarańczowe
+            QColor(255, 165, 0),    # Orange
+            QColor(255, 140, 0),    # Dark Orange
+            QColor(255, 127, 80),   # Coral
+            # Fioletowe
+            QColor(218, 112, 214),  # Orchid
+            QColor(186, 85, 211),   # Medium Orchid
+            QColor(147, 112, 219),  # Medium Purple
+            # Brązowe
+            QColor(205, 133, 63),   # Peru
+            QColor(210, 105, 30),   # Chocolate
+            QColor(205, 92, 92),    # Indian Red
+            # Szare
+            QColor(211, 211, 211),  # Light Gray
+            QColor(192, 192, 192),  # Silver
+            QColor(169, 169, 169),  # Dark Gray
         ]
 
     def set_ip_color(self, ip):
@@ -65,54 +146,117 @@ class IPHighlighter(QSyntaxHighlighter):
 class IPCheckerThread(QThread):
     finished = pyqtSignal(dict)
     error = pyqtSignal(str)
-
+    progress = pyqtSignal(int)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.cache = {}
+        self.cache_timestamps = {}
+        self.parent = parent
+        
+    def is_cached(self, key):
+        """Sprawdza, czy dane są w cache i czy są aktualne"""
+        if key not in self.cache:
+            return False
+        timestamp = self.cache_timestamps[key]
+        return (datetime.now() - timestamp).total_seconds() < CONFIG['cache_timeout']
+    
+    def get_from_cache(self, key):
+        """Pobiera dane z cache"""
+        return self.cache[key]
+    
+    def add_to_cache(self, key, data):
+        """Dodaje dane do cache"""
+        self.cache[key] = data
+        self.cache_timestamps[key] = datetime.now()
+    
+    def validate_and_fetch(self, url, timeout=CONFIG['timeout']):
+        """Waliduje URL i wykonuje zapytanie"""
+        if not validate_url(url):
+            raise ValueError(f"Nieprawidłowy URL: {url}")
+            
+        for attempt in range(CONFIG['max_retries']):
+            try:
+                # Aktualizacja postępu
+                self.progress.emit(int((attempt + 1) / CONFIG['max_retries'] * 33))
+                
+                response = requests.get(
+                    url,
+                    timeout=timeout,
+                    proxies=CONFIG['proxy']
+                )
+                response.raise_for_status()
+                return response
+            except requests.exceptions.RequestException as e:
+                if attempt == CONFIG['max_retries'] - 1:
+                    raise
+                print(f"Próba {attempt + 1} nie powiodła się: {e}")
+                continue
+    
+    def validate_ip_data(self, data):
+        """Walidacja danych IP"""
+        if not isinstance(data, dict):
+            raise ValueError("Dane nie są słownikiem")
+            
+        ip = data.get('ip')
+        if not ip or not validate_ip(ip):
+            raise ValueError(f"Nieprawidłowy adres IP: {ip}")
+            
+        # Sprawdzenie kluczowych pól
+        required_fields = ['country', 'region', 'city', 'org', 'loc']
+        for field in required_fields:
+            if field in data and not isinstance(data[field], str):
+                raise ValueError(f"Nieprawidłowy typ danych dla pola {field}")
+                
+        return data
+    
     def run(self):
         try:
-            ip_services = [
-                ("https://api.ipify.org?format=json", "json"),
-                ("https://ifconfig.me/ip", "text"),
-                ("https://icanhazip.com", "text"),
-            ]
             ip = None
-            for service, response_type in ip_services:
+            for service, response_type in CONFIG['ip_services']:
                 try:
-                    print(f"Próba pobrania IP z {service}...")
-                    response = requests.get(service, timeout=5)
-                    response.raise_for_status()
+                    if self.is_cached('ip'):
+                        ip = self.get_from_cache('ip')
+                        print(f"Użyto cache dla IP: {ip}")
+                        break
+                        
+                    response = self.validate_and_fetch(service)
                     if response_type == "json":
                         ip = response.json().get("ip")
                     else:
                         ip = response.text.strip()
-                    if ip:
-                        print(f"Pobrano IP: {ip}")
+                        
+                    if ip and validate_ip(ip):
+                        self.add_to_cache('ip', ip)
+                        print(f"Pobrano i zwalidowano IP: {ip}")
                         break
-                except requests.exceptions.RequestException as e:
+                except Exception as e:
                     print(f"Błąd pobierania IP z {service}: {e}")
+            
             if not ip:
                 self.error.emit("Nie udało się pobrać adresu IP.")
                 return
 
-            info_services = [
-                f"https://ipinfo.io/{ip}/json",
-                f"https://ipapi.co/{ip}/json/",
-                f"https://ip-api.com/json/{ip}",
-            ]
-            for service in info_services:
+            info_cache_key = f"info_{ip}"
+            if self.is_cached(info_cache_key):
+                data = self.get_from_cache(info_cache_key)
+                self.finished.emit(data)
+                return
+
+            for service in CONFIG['info_services']:
                 try:
-                    print(f"Próba pobrania info dla {ip} z {service}...")
-                    response = requests.get(service, timeout=5)
-                    response.raise_for_status()
+                    service_url = service.format(ip=ip)
+                    response = self.validate_and_fetch(service_url)
                     data = response.json()
                     normalized_data = self.normalize_ip_data(data, ip)
+                    
                     if "loc" in normalized_data:  # Kluczowe jest 'loc'
+                        self.add_to_cache(info_cache_key, normalized_data)
                         print(f"Pobrano dane lokalizacyjne dla {ip}")
                         self.finished.emit(normalized_data)
                         return
-                except (
-                    requests.exceptions.RequestException,
-                    json.JSONDecodeError,
-                ) as e:
-                    print(f"Błąd pobierania info z {service}: {e}")
+                except Exception as e:
+                    print(f"Błąd pobrania info z {service}: {e}")
 
             # Jeśli doszliśmy tutaj, to znaczy, że udało się pobrać IP, ale nie dane lokalizacyjne
             print(
@@ -120,6 +264,7 @@ class IPCheckerThread(QThread):
             )
             partial_data = self.normalize_ip_data({}, ip)
             partial_data["error_loc"] = "Nie udało się pobrać danych lokalizacyjnych."
+            self.add_to_cache(info_cache_key, partial_data)
             self.finished.emit(partial_data)
 
         except Exception as e:
@@ -127,6 +272,7 @@ class IPCheckerThread(QThread):
             self.error.emit(f"Nieoczekiwany błąd wątku: {str(e)}")
 
     def normalize_ip_data(self, data, ip):
+        """Normalizuje dane z różnych serwisów IP"""
         normalized = {"ip": ip}
         field_mappings = {
             "country": ["country", "country_name", "countryCode"],
@@ -139,13 +285,16 @@ class IPCheckerThread(QThread):
             "lat": ["lat", "latitude"],
             "lon": ["lon", "longitude"],
         }
+        
         for std_f, pos_f in field_mappings.items():
             for f in pos_f:
                 if f in data and data[f]:
                     normalized[std_f] = data[f]
                     break
+        
         if "loc" not in normalized and "lat" in normalized and "lon" in normalized:
             normalized["loc"] = f"{normalized['lat']},{normalized['lon']}"
+        
         return normalized
 
 
@@ -153,22 +302,60 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Sprawdzacz IP")
-        self.setMinimumSize(1200, 800)  # Można dostosować
+        self.setMinimumSize(1200, 800)
         self.history = []
         self.history_file = Path("ip_history.json")
         self.load_history()
+        self.checking_in_progress = False
 
         self.setStyleSheet(
             """
             QMainWindow { background-color: #2b2b2b; }
             QLabel { color: #ffffff; font-size: 14px; }
-            QPushButton { background-color: #0d47a1; color: white; border: none; padding: 10px; font-size: 14px; border-radius: 5px; }
+            QPushButton { 
+                background-color: #0d47a1; 
+                color: white; 
+                border: none; 
+                padding: 10px; 
+                font-size: 14px; 
+                border-radius: 5px;
+                min-width: 120px;
+            }
             QPushButton:hover { background-color: #1565c0; }
             QPushButton:pressed { background-color: #0a3d91; }
-            QPushButton:disabled { background-color: #555555; color: #aaaaaa; }
-            QTextEdit { background-color: #1e1e1e; color: #ffffff; border: 1px solid #3d3d3d; border-radius: 5px; padding: 5px; font-size: 13px; font-family: Consolas, 'Courier New', monospace; }
-            QSplitter::handle { background-color: #3d3d3d; width: 5px; }
-            QSplitter::handle:hover { background-color: #666666; }
+            QPushButton:disabled { 
+                background-color: #555555; 
+                color: #aaaaaa; 
+            }
+            QPushButton:disabled:hover { 
+                background-color: #555555; 
+            }
+            QTextEdit { 
+                background-color: #1e1e1e; 
+                color: #ffffff; 
+                border: 1px solid #3d3d3d; 
+                border-radius: 5px; 
+                padding: 5px; 
+                font-size: 13px; 
+                font-family: Consolas, 'Courier New', monospace; 
+            }
+            QSplitter::handle { 
+                background-color: #3d3d3d; 
+                width: 5px; 
+            }
+            QSplitter::handle:hover { 
+                background-color: #666666; 
+            }
+            QProgressBar {
+                background-color: #1e1e1e;
+                border: 1px solid #3d3d3d;
+                border-radius: 5px;
+                text-align: center;
+            }
+            QProgressBar::chunk {
+                background-color: #0d47a1;
+                width: 1px;
+            }
             /* Celowo nie stylizujemy QWebEngineView tutaj, jego tło jest zarządzane przez HTML */
         """
         )
@@ -177,21 +364,31 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(main_widget)
         main_layout = QHBoxLayout(main_widget)
         main_layout.setSpacing(15)
-        main_layout.setContentsMargins(
-            15, 15, 15, 15
-        )  # Zmniejszone marginesy głównego okna
+        main_layout.setContentsMargins(15, 15, 15, 15)
 
         # --- Lewa strona ---
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         left_layout.setSpacing(15)
+        
+        # Tytuł
         title = QLabel("Sprawdzacz Adresu IP")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet("font-size: 24px; font-weight: bold; margin-bottom: 20px;")
         left_layout.addWidget(title)
+        
+        # Przycisk sprawdzenia
         self.check_button = QPushButton("Sprawdź mój adres IP")
+        self.check_button.setToolTip("Sprawdza twój adres IP i informacje o lokalizacji")
         self.check_button.clicked.connect(self.check_ip)
         left_layout.addWidget(self.check_button)
+        
+        # Progress bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(False)
+        left_layout.addWidget(self.progress_bar)
 
         splitter = QSplitter(Qt.Orientation.Vertical)
         left_layout.addWidget(splitter)
@@ -442,15 +639,30 @@ class MainWindow(QMainWindow):
             self.show_fallback_map_message(f"Nie można zaktualizować mapy. Błąd: {e}")
 
     def check_ip(self):
+        """Metoda wywoływana po kliknięciu przycisku sprawdzenia IP"""
+        if self.checking_in_progress:
+            return
+            
+        self.checking_in_progress = True
         self.check_button.setEnabled(False)
-        self.result_text.setText("🔎 Sprawdzanie IP...")
-        self.result_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.thread = IPCheckerThread()
-        self.thread.finished.connect(self.show_results)
-        self.thread.error.connect(self.show_error)
-        self.thread.start()
-
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(0)
+        
+        self.ip_checker = IPCheckerThread(self)
+        self.ip_checker.finished.connect(self.show_results)
+        self.ip_checker.error.connect(self.show_error)
+        self.ip_checker.progress.connect(self.update_progress)
+        self.ip_checker.start()
+        
+    def update_progress(self, value):
+        """Aktualizuje wartość progress bar"""
+        self.progress_bar.setValue(value)
+        
     def show_results(self, data):
+        """Metoda wyświetlająca wyniki"""
+        self.check_button.setEnabled(True)
+        self.progress_bar.setVisible(False)
+        self.checking_in_progress = False
         self.result_text.setAlignment(Qt.AlignmentFlag.AlignLeft)
         ip = data.get("ip", "Nieznany")
         loc_error = data.get(
