@@ -34,15 +34,15 @@ def validate_url(url):
         result = urlparse(url)
         if not all([result.scheme, result.netloc]):
             return False
-            
+
         # Sprawdzenie poprawności schematu
         if result.scheme not in ['http', 'https']:
             return False
-            
+
         # Sprawdzenie poprawności hosta
         if not re.match(r'^[a-zA-Z0-9.-]+$', result.netloc):
             return False
-            
+
         return True
     except:
         return False
@@ -147,39 +147,39 @@ class IPCheckerThread(QThread):
     finished = pyqtSignal(dict)
     error = pyqtSignal(str)
     progress = pyqtSignal(int)
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.cache = {}
         self.cache_timestamps = {}
         self.parent = parent
-        
+
     def is_cached(self, key):
         """Sprawdza, czy dane są w cache i czy są aktualne"""
         if key not in self.cache:
             return False
         timestamp = self.cache_timestamps[key]
         return (datetime.now() - timestamp).total_seconds() < CONFIG['cache_timeout']
-    
+
     def get_from_cache(self, key):
         """Pobiera dane z cache"""
         return self.cache[key]
-    
+
     def add_to_cache(self, key, data):
         """Dodaje dane do cache"""
         self.cache[key] = data
         self.cache_timestamps[key] = datetime.now()
-    
+
     def validate_and_fetch(self, url, timeout=CONFIG['timeout']):
         """Waliduje URL i wykonuje zapytanie"""
         if not validate_url(url):
             raise ValueError(f"Nieprawidłowy URL: {url}")
-            
+
         for attempt in range(CONFIG['max_retries']):
             try:
                 # Aktualizacja postępu
                 self.progress.emit(int((attempt + 1) / CONFIG['max_retries'] * 33))
-                
+
                 response = requests.get(
                     url,
                     timeout=timeout,
@@ -192,24 +192,24 @@ class IPCheckerThread(QThread):
                     raise
                 print(f"Próba {attempt + 1} nie powiodła się: {e}")
                 continue
-    
+
     def validate_ip_data(self, data):
         """Walidacja danych IP"""
         if not isinstance(data, dict):
             raise ValueError("Dane nie są słownikiem")
-            
+
         ip = data.get('ip')
         if not ip or not validate_ip(ip):
             raise ValueError(f"Nieprawidłowy adres IP: {ip}")
-            
+
         # Sprawdzenie kluczowych pól
         required_fields = ['country', 'region', 'city', 'org', 'loc']
         for field in required_fields:
             if field in data and not isinstance(data[field], str):
                 raise ValueError(f"Nieprawidłowy typ danych dla pola {field}")
-                
+
         return data
-    
+
     def run(self):
         try:
             ip = None
@@ -219,20 +219,20 @@ class IPCheckerThread(QThread):
                         ip = self.get_from_cache('ip')
                         print(f"Użyto cache dla IP: {ip}")
                         break
-                        
+
                     response = self.validate_and_fetch(service)
                     if response_type == "json":
                         ip = response.json().get("ip")
                     else:
                         ip = response.text.strip()
-                        
+
                     if ip and validate_ip(ip):
                         self.add_to_cache('ip', ip)
                         print(f"Pobrano i zwalidowano IP: {ip}")
                         break
                 except Exception as e:
                     print(f"Błąd pobierania IP z {service}: {e}")
-            
+
             if not ip:
                 self.error.emit("Nie udało się pobrać adresu IP.")
                 return
@@ -249,7 +249,7 @@ class IPCheckerThread(QThread):
                     response = self.validate_and_fetch(service_url)
                     data = response.json()
                     normalized_data = self.normalize_ip_data(data, ip)
-                    
+
                     if "loc" in normalized_data:  # Kluczowe jest 'loc'
                         self.add_to_cache(info_cache_key, normalized_data)
                         print(f"Pobrano dane lokalizacyjne dla {ip}")
@@ -285,16 +285,16 @@ class IPCheckerThread(QThread):
             "lat": ["lat", "latitude"],
             "lon": ["lon", "longitude"],
         }
-        
+
         for std_f, pos_f in field_mappings.items():
             for f in pos_f:
                 if f in data and data[f]:
                     normalized[std_f] = data[f]
                     break
-        
+
         if "loc" not in normalized and "lat" in normalized and "lon" in normalized:
             normalized["loc"] = f"{normalized['lat']},{normalized['lon']}"
-        
+
         return normalized
 
 
@@ -312,39 +312,39 @@ class MainWindow(QMainWindow):
             """
             QMainWindow { background-color: #2b2b2b; }
             QLabel { color: #ffffff; font-size: 14px; }
-            QPushButton { 
-                background-color: #0d47a1; 
-                color: white; 
-                border: none; 
-                padding: 10px; 
-                font-size: 14px; 
+            QPushButton {
+                background-color: #0d47a1;
+                color: white;
+                border: none;
+                padding: 10px;
+                font-size: 14px;
                 border-radius: 5px;
                 min-width: 120px;
             }
             QPushButton:hover { background-color: #1565c0; }
             QPushButton:pressed { background-color: #0a3d91; }
-            QPushButton:disabled { 
-                background-color: #555555; 
-                color: #aaaaaa; 
+            QPushButton:disabled {
+                background-color: #555555;
+                color: #aaaaaa;
             }
-            QPushButton:disabled:hover { 
-                background-color: #555555; 
+            QPushButton:disabled:hover {
+                background-color: #555555;
             }
-            QTextEdit { 
-                background-color: #1e1e1e; 
-                color: #ffffff; 
-                border: 1px solid #3d3d3d; 
-                border-radius: 5px; 
-                padding: 5px; 
-                font-size: 13px; 
-                font-family: Consolas, 'Courier New', monospace; 
+            QTextEdit {
+                background-color: #1e1e1e;
+                color: #ffffff;
+                border: 1px solid #3d3d3d;
+                border-radius: 5px;
+                padding: 5px;
+                font-size: 13px;
+                font-family: Consolas, 'Courier New', monospace;
             }
-            QSplitter::handle { 
-                background-color: #3d3d3d; 
-                width: 5px; 
+            QSplitter::handle {
+                background-color: #3d3d3d;
+                width: 5px;
             }
-            QSplitter::handle:hover { 
-                background-color: #666666; 
+            QSplitter::handle:hover {
+                background-color: #666666;
             }
             QProgressBar {
                 background-color: #1e1e1e;
@@ -370,19 +370,19 @@ class MainWindow(QMainWindow):
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         left_layout.setSpacing(15)
-        
+
         # Tytuł
         title = QLabel("Sprawdzacz Adresu IP")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet("font-size: 24px; font-weight: bold; margin-bottom: 20px;")
         left_layout.addWidget(title)
-        
+
         # Przycisk sprawdzenia
         self.check_button = QPushButton("Sprawdź mój adres IP")
         self.check_button.setToolTip("Sprawdza twój adres IP i informacje o lokalizacji")
         self.check_button.clicked.connect(self.check_ip)
         left_layout.addWidget(self.check_button)
-        
+
         # Progress bar
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
@@ -516,33 +516,33 @@ class MainWindow(QMainWindow):
                          var mapDiv = document.getElementById('mapid'); if(mapDiv) mapDiv.style.display = 'none'; if(msgDiv) msgDiv.style.display = 'flex';"
             ></script>
             <style>
-                html, body {{ 
+                html, body {{
                     height: 100%; width: 100%; /* body i html zajmują 100% viewportu QWebEngineView */
-                    margin: 0; padding: 0; 
+                    margin: 0; padding: 0;
                     background-color: #1e1e1e; /* Tło dla obszaru mapy, jeśli coś pójdzie nie tak */
-                    color: #ffffff; 
-                    font-family: Arial, sans-serif; 
+                    color: #ffffff;
+                    font-family: Arial, sans-serif;
                     overflow: hidden; /* Zapobiega paskom przewijania na body */
                 }}
                 #map-container {{ /* Ten div obejmuje wszystko w body */
                     height: 100%; width: 100%;
-                    display: flex; 
+                    display: flex;
                     flex-direction: column;
                 }}
-                #message {{ 
+                #message {{
                     display: flex; /* Domyślnie widoczny komunikat */
-                    justify-content: center; align-items: center; 
+                    justify-content: center; align-items: center;
                     flex-grow: 1; /* Zajmuje całą przestrzeń jeśli mapa jest ukryta */
                     text-align: center; font-size: 1.1em; padding: 10px; box-sizing: border-box;
                     background-color: #2b2b2b; /* Tło dla komunikatu */
                 }}
-                #mapid {{ 
+                #mapid {{
                     display: none; /* Domyślnie mapa ukryta */
                     flex-grow: 1; /* Pozwól mapie rosnąć, aby wypełnić dostępną przestrzeń */
-                    width: 100%; 
+                    width: 100%;
                     background-color: #1e1e1e; /* Tło samej mapy zanim załadują się kafelki */
                 }}
-                .leaflet-popup-content-wrapper {{ background: #ffffff; color: #333333; border-radius: 5px; }} 
+                .leaflet-popup-content-wrapper {{ background: #ffffff; color: #333333; border-radius: 5px; }}
                 .leaflet-popup-tip-container {{ width: 40px; height: 20px; }}
                 .leaflet-popup-tip {{ background: #ffffff; border: none; box-shadow: none; }}
                 .leaflet-container a {{ color: #0078A8; }} /* Lepszy kolor linków w popupie */
@@ -560,17 +560,17 @@ class MainWindow(QMainWindow):
                         mapDiv.style.display = 'block';  // Pokaż mapę (powinna się rozciągnąć dzięki flex-grow)
 
                         var mymap = L.map('mapid').setView({view}, {zoom});
-                        
+
                         L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{ // KOLOROWA MAPA
                             attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
                             maxZoom: 19, minZoom: 2 // Ustawienie minZoom może być przydatne
                         }}).addTo(mymap);
-                        
+
                         {marker_code}
                         // Kluczowe: invalidateSize po chwili, aby mapa dostosowała się do rozmiaru kontenera
-                        setTimeout(function() {{ 
+                        setTimeout(function() {{
                             console.log("Wywołuję mymap.invalidateSize()");
-                            mymap.invalidateSize(); 
+                            mymap.invalidateSize();
                         }}, 500); // Zwiększony timeout dla pewności
                     }} catch (error) {{
                         console.error('Błąd inicjalizacji mapy Leaflet (w bloku try...catch initMap):', error);
@@ -582,7 +582,7 @@ class MainWindow(QMainWindow):
                 }}
                 function tryInitMap(attemptsLeft = 25, delay = 400) {{ // Więcej prób, krótszy delay
                     var messageDiv = document.getElementById('message'); var mapDiv = document.getElementById('mapid');
-                    if (typeof L !== 'undefined' && L.map) {{ 
+                    if (typeof L !== 'undefined' && L.map) {{
                         console.log("Leaflet (L) jest załadowany i L.map istnieje. Inicjalizuję mapę.");
                         initMap();
                     }} else if (attemptsLeft > 0) {{
@@ -642,22 +642,22 @@ class MainWindow(QMainWindow):
         """Metoda wywoływana po kliknięciu przycisku sprawdzenia IP"""
         if self.checking_in_progress:
             return
-            
+
         self.checking_in_progress = True
         self.check_button.setEnabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
-        
+
         self.ip_checker = IPCheckerThread(self)
         self.ip_checker.finished.connect(self.show_results)
         self.ip_checker.error.connect(self.show_error)
         self.ip_checker.progress.connect(self.update_progress)
         self.ip_checker.start()
-        
+
     def update_progress(self, value):
         """Aktualizuje wartość progress bar"""
         self.progress_bar.setValue(value)
-        
+
     def show_results(self, data):
         """Metoda wyświetlająca wyniki"""
         self.check_button.setEnabled(True)
