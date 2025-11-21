@@ -1,20 +1,37 @@
 import json
 import sys
 import os
+import socket
+import re
+import time
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-import requests
 from urllib.parse import urlparse
-import socket
-import re
+
+import requests
+from PyQt6.QtCore import Qt, QThread, QUrl, pyqtSignal
+from PyQt6.QtGui import QColor, QFont, QPalette, QSyntaxHighlighter, QTextCharFormat
+from PyQt6.QtWidgets import (
+    QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QPushButton,
+    QSplitter, QProgressBar, QTextBrowser, QTextEdit, QVBoxLayout, QWidget
+)
+
+try:
+    from PyQt6.QtWebEngineWidgets import QWebEngineView
+    from PyQt6.QtWebEngineCore import QWebEngineSettings, QWebEngineProfile
+except ImportError:
+    print("Błąd krytyczny: Moduł PyQt6-WebEngine nie jest zainstalowany.")
+    print("Zainstaluj go za pomocą: pip install PyQt6-WebEngine")
+    sys.exit(1)
 
 # Konfiguracja serwisów
 CONFIG = {
     'ip_services': [
         ("https://api.ipify.org?format=json", "json"),
         ("https://ifconfig.me/ip", "text"),
-        ("https://icanhazip.com", "text")
+        ("https://icanhazip.com", "text"),
+        ("http://1.1.1.1/cdn-cgi/trace", "cloudflare_trace")  # Fallback po IP (bez DNS)
     ],
     'info_services': [
         "https://ipinfo.io/{ip}/json",
@@ -54,40 +71,6 @@ def validate_ip(ip):
         return True
     except socket.error:
         return False
-
-import json
-import sys
-import os
-from collections import defaultdict
-from datetime import datetime
-from pathlib import Path
-
-import requests
-from PyQt6.QtCore import Qt, QThread, QUrl, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QPalette, QSyntaxHighlighter, QTextCharFormat
-
-try:
-    from PyQt6.QtWebEngineWidgets import QWebEngineView
-    from PyQt6.QtWebEngineCore import QWebEngineSettings, QWebEngineProfile
-except ImportError:
-    print("Błąd krytyczny: Moduł PyQt6-WebEngine nie jest zainstalowany.")
-    print("Zainstaluj go za pomocą: pip install PyQt6-WebEngine")
-    sys.exit(1)
-
-from PyQt6.QtWidgets import (
-    QApplication,
-    QFrame,
-    QHBoxLayout,
-    QLabel,
-    QMainWindow,
-    QPushButton,
-    QSplitter,
-    QProgressBar,
-    QTextBrowser,
-    QTextEdit,
-    QVBoxLayout,
-    QWidget,
-)
 
 
 class IPHighlighter(QSyntaxHighlighter):
@@ -188,9 +171,15 @@ class IPCheckerThread(QThread):
                 response.raise_for_status()
                 return response
             except requests.exceptions.RequestException as e:
+                # Jeśli to błąd DNS, nie ma sensu ponawiać prób dla tego samego hosta
+                if "NameResolutionError" in str(e) or "getaddrinfo failed" in str(e):
+                    print(f"Błąd DNS dla {url}: {e}. Przerywam retries dla tego serwisu.")
+                    raise
+                
                 if attempt == CONFIG['max_retries'] - 1:
                     raise
                 print(f"Próba {attempt + 1} nie powiodła się: {e}")
+                time.sleep(1)  # Krótkie opóźnienie przed kolejną próbą
                 continue
 
     def validate_ip_data(self, data):
@@ -210,9 +199,37 @@ class IPCheckerThread(QThread):
 
         return data
 
+    def check_connectivity(self):
+        """Sprawdza połączenie z internetem i DNS"""
+        try:
+            # 1. Sprawdzenie routingu IP (Google DNS)
+            socket.create_connection(("8.8.8.8", 53), timeout=2)
+            
+            # 2. Sprawdzenie DNS (rozwiązywanie nazwy)
+            try:
+                socket.gethostbyname("google.com")
+                return True
+            except socket.error:
+                print("Połączenie IP działa, ale DNS nie odpowiada.")
+                return "DNS_ERROR"
+                
+        except OSError:
+            return False
+
     def run(self):
         try:
+            # Szybkie sprawdzenie połączenia
+            conn_status = self.check_connectivity()
+            if conn_status is False:
+                self.error.emit("Brak połączenia z internetem. Sprawdź kabel/WiFi.")
+                return
+            elif conn_status == "DNS_ERROR":
+                # Ostrzeżenie, ale próbujemy dalej (może zadziała fallback po IP)
+                print("Wykryto problem z DNS. Próba użycia serwisów dostępnych po IP.")
+
             ip = None
+            last_error = None
+            
             for service, response_type in CONFIG['ip_services']:
                 try:
                     if self.is_cached('ip'):
@@ -221,8 +238,15 @@ class IPCheckerThread(QThread):
                         break
 
                     response = self.validate_and_fetch(service)
+                    
                     if response_type == "json":
                         ip = response.json().get("ip")
+                    elif response_type == "cloudflare_trace":
+                        # Parsowanie formatu key=value
+                        for line in response.text.splitlines():
+                            if line.startswith("ip="):
+                                ip = line.split("=")[1].strip()
+                                break
                     else:
                         ip = response.text.strip()
 
@@ -232,9 +256,13 @@ class IPCheckerThread(QThread):
                         break
                 except Exception as e:
                     print(f"Błąd pobierania IP z {service}: {e}")
+                    last_error = e
 
             if not ip:
-                self.error.emit("Nie udało się pobrać adresu IP.")
+                error_msg = "Nie udało się pobrać adresu IP."
+                if isinstance(last_error, requests.exceptions.ConnectionError):
+                    error_msg += " (Problem z połączeniem/DNS)"
+                self.error.emit(error_msg)
                 return
 
             info_cache_key = f"info_{ip}"
@@ -487,156 +515,90 @@ class MainWindow(QMainWindow):
 
     def _get_map_html(self, lat=None, lon=None):
         if lat is not None and lon is not None:
-            view = f"[{lat}, {lon}]"
+            center = f"[{lat}, {lon}]"
             zoom = 13
-            marker_code = f'var marker = L.marker([{lat}, {lon}]).addTo(mymap); marker.bindPopup("<b>Przybliżona lokalizacja IP</b><br>Szer: {lat}<br>Dłg: {lon}").openPopup();'
-            loading_text = "Ładowanie lokalizacji na mapie..."
+            marker_js = f"L.marker([{lat}, {lon}]).addTo(mymap).bindPopup('<b>Lokalizacja IP</b><br>{lat}, {lon}').openPopup();"
         else:
-            view = "[50, 10]"
-            zoom = 4  # Widok na Europę
-            marker_code = ""
-            loading_text = "Ładowanie domyślnej mapy..."
+            center = "[52.2297, 21.0122]"  # Warszawa
+            zoom = 6
+            marker_js = ""
 
-        cdn_leaflet_css = (
-            "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css"
-        )
-        cdn_leaflet_js = (
-            "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"
-        )
-
-        # Wersja HTML/CSS/JS zmodyfikowana dla lepszego dopasowania i kolorowej mapy
         return f"""
         <!DOCTYPE html>
-        <html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><title>Mapa IP</title>
-            <link rel="stylesheet" href="{cdn_leaflet_css}"/>
-            <script src="{cdn_leaflet_js}"
-                onerror="console.error('*** KRYTYCZNY BŁĄD: Nie udało się załadować pliku leaflet.js z CDN: {cdn_leaflet_js}. ***');
-                         var msgDiv = document.getElementById('message');
-                         if(msgDiv) msgDiv.innerHTML = '<p>🗺️ KRYTYCZNY BŁĄD ładowania biblioteki mapy (plik JS nieosiągalny).</p>';
-                         var mapDiv = document.getElementById('mapid'); if(mapDiv) mapDiv.style.display = 'none'; if(msgDiv) msgDiv.style.display = 'flex';"
-            ></script>
+        <html>
+        <head>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Mapa IP</title>
+            <!-- Używamy cdnjs jako głównego źródła, jest często bardziej stabilny -->
+            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
             <style>
-                html, body {{
-                    height: 100%; width: 100%; /* body i html zajmują 100% viewportu QWebEngineView */
-                    margin: 0; padding: 0;
-                    background-color: #1e1e1e; /* Tło dla obszaru mapy, jeśli coś pójdzie nie tak */
-                    color: #ffffff;
-                    font-family: Arial, sans-serif;
-                    overflow: hidden; /* Zapobiega paskom przewijania na body */
-                }}
-                #map-container {{ /* Ten div obejmuje wszystko w body */
-                    height: 100%; width: 100%;
-                    display: flex;
-                    flex-direction: column;
-                }}
-                #message {{
-                    display: flex; /* Domyślnie widoczny komunikat */
-                    justify-content: center; align-items: center;
-                    flex-grow: 1; /* Zajmuje całą przestrzeń jeśli mapa jest ukryta */
-                    text-align: center; font-size: 1.1em; padding: 10px; box-sizing: border-box;
-                    background-color: #2b2b2b; /* Tło dla komunikatu */
-                }}
-                #mapid {{
-                    display: none; /* Domyślnie mapa ukryta */
-                    flex-grow: 1; /* Pozwól mapie rosnąć, aby wypełnić dostępną przestrzeń */
-                    width: 100%;
-                    background-color: #1e1e1e; /* Tło samej mapy zanim załadują się kafelki */
-                }}
-                .leaflet-popup-content-wrapper {{ background: #ffffff; color: #333333; border-radius: 5px; }}
-                .leaflet-popup-tip-container {{ width: 40px; height: 20px; }}
-                .leaflet-popup-tip {{ background: #ffffff; border: none; box-shadow: none; }}
-                .leaflet-container a {{ color: #0078A8; }} /* Lepszy kolor linków w popupie */
+                body {{ margin: 0; padding: 0; background-color: #2b2b2b; font-family: Arial, sans-serif; }}
+                #mapid {{ height: 100vh; width: 100%; }}
+                .loading {{ display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; color: #ffffff; text-align: center; }}
+                .retry-btn {{ margin-top: 10px; padding: 5px 10px; background: #0d47a1; color: white; border: none; cursor: pointer; display: none; }}
             </style>
-        </head><body>
-            <div id="map-container">
-                 <div id="message"><p>{loading_text}</p></div>
-                 <div id="mapid"></div>
+        </head>
+        <body>
+            <div id="loading" class="loading">
+                <span id="loading-text">Ładowanie mapy...</span>
+                <button id="retry-btn" class="retry-btn" onclick="location.reload()">Spróbuj ponownie</button>
             </div>
+            <div id="mapid" style="display:none;"></div>
             <script>
                 function initMap() {{
-                    var messageDiv = document.getElementById('message'); var mapDiv = document.getElementById('mapid');
-                    try {{
-                        messageDiv.style.display = 'none'; // Ukryj komunikat
-                        mapDiv.style.display = 'block';  // Pokaż mapę (powinna się rozciągnąć dzięki flex-grow)
-
-                        var mymap = L.map('mapid').setView({view}, {zoom});
-
-                        L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{ // KOLOROWA MAPA
-                            attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-                            maxZoom: 19, minZoom: 2 // Ustawienie minZoom może być przydatne
-                        }}).addTo(mymap);
-
-                        {marker_code}
-                        // Kluczowe: invalidateSize po chwili, aby mapa dostosowała się do rozmiaru kontenera
-                        setTimeout(function() {{
-                            console.log("Wywołuję mymap.invalidateSize()");
-                            mymap.invalidateSize();
-                        }}, 500); // Zwiększony timeout dla pewności
-                    }} catch (error) {{
-                        console.error('Błąd inicjalizacji mapy Leaflet (w bloku try...catch initMap):', error);
-                        if (messageDiv && mapDiv) {{
-                            messageDiv.innerHTML = '<p>🗺️ Wystąpił błąd podczas inicjalizacji mapy.</p>';
-                            mapDiv.style.display = 'none'; messageDiv.style.display = 'flex';
-                        }}
-                    }}
+                    document.getElementById('loading').style.display = 'none';
+                    document.getElementById('mapid').style.display = 'block';
+                    
+                    var mymap = L.map('mapid').setView({center}, {zoom});
+                    
+                    L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+                        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+                        maxZoom: 19
+                    }}).addTo(mymap);
+                    
+                    {marker_js}
+                    
+                    setTimeout(function() {{ mymap.invalidateSize(); }}, 500);
                 }}
-                function tryInitMap(attemptsLeft = 25, delay = 400) {{ // Więcej prób, krótszy delay
-                    var messageDiv = document.getElementById('message'); var mapDiv = document.getElementById('mapid');
-                    if (typeof L !== 'undefined' && L.map) {{
-                        console.log("Leaflet (L) jest załadowany i L.map istnieje. Inicjalizuję mapę.");
+
+                function checkLeaflet(attempts) {{
+                    if (typeof L !== 'undefined') {{
                         initMap();
-                    }} else if (attemptsLeft > 0) {{
-                        var attemptCount = 26 - attemptsLeft;
-                        console.log(`Leaflet (L) lub L.map jeszcze nie załadowane. Próba ${{attemptCount}}/25 za ${{delay}}ms.`);
-                        if (messageDiv) {{
-                            messageDiv.innerHTML = `<p>Ładowanie biblioteki mapy... (próba ${{attemptCount}}/25)</p>`;
-                            if(messageDiv.style.display !== 'flex') messageDiv.style.display = 'flex';
-                            if(mapDiv && mapDiv.style.display !== 'none') mapDiv.style.display = 'none';
-                        }}
-                        setTimeout(function() {{ tryInitMap(attemptsLeft - 1, delay); }}, delay);
+                    }} else if (attempts > 0) {{
+                        // Próbuj dalej
+                        document.getElementById('loading-text').innerText = 'Ładowanie biblioteki mapy... (' + attempts + ')';
+                        setTimeout(function() {{ checkLeaflet(attempts - 1); }}, 500);
                     }} else {{
-                        console.error('Nie udało się załadować Leaflet (L) lub L.map po wielu próbach.');
-                        if (messageDiv && mapDiv) {{
-                             messageDiv.innerHTML = '<p>🗺️ Błąd krytyczny: Nie można załadować biblioteki mapy po wielu próbach. Sprawdź połączenie internetowe i konsolę zdalnego debugowania (http://localhost:{os.environ.get("QTWEBENGINE_REMOTE_DEBUGGING", "PORT_NIEUSTAWIONY")}).</p>';
-                             if(mapDiv.style.display !== 'none') mapDiv.style.display = 'none';
-                             if(messageDiv.style.display !== 'flex') messageDiv.style.display = 'flex';
-                        }}
+                        // Poddaj się po wielu próbach
+                        document.getElementById('loading-text').innerText = 'Błąd: Nie udało się załadować biblioteki Leaflet (timeout). Sprawdź połączenie internetowe.';
+                        document.getElementById('retry-btn').style.display = 'inline-block';
                     }}
                 }}
-                document.addEventListener('DOMContentLoaded', function() {{
-                    console.log("DOMContentLoaded - rozpoczynam próby ładowania mapy.");
-                    var messageDiv = document.getElementById('message');
-                    var mapDiv = document.getElementById('mapid');
-                    if (messageDiv) messageDiv.style.display = 'flex'; // Upewnij się, że komunikat jest widoczny
-                    if (mapDiv) mapDiv.style.display = 'none';    // A mapa ukryta
-
-                    setTimeout(function() {{ tryInitMap(); }}, 200); // Krótsze opóźnienie startowe
-                }});
+                
+                // Rozpocznij sprawdzanie z limitem 20 prób co 500ms (czyli 10 sekund na załadowanie)
+                if (document.readyState === 'loading') {{
+                    document.addEventListener('DOMContentLoaded', function() {{ checkLeaflet(20); }});
+                }} else {{
+                    checkLeaflet(20);
+                }}
             </script>
-        </body></html>"""
+        </body>
+        </html>
+        """
 
     def init_default_map(self):
-        html = self._get_map_html()
-        self.map_view.setHtml(
-            html, QUrl("about:blank")
-        )  # about:blank jest OK jako baseUrl dla prostego HTML
+        self.map_view.setHtml(self._get_map_html())
 
     def update_map(self, lat, lon):
         try:
             lat_f = float(lat)
             lon_f = float(lon)
-            print(f"Aktualizuję mapę: {lat_f}, {lon_f}")
-            html = self._get_map_html(lat_f, lon_f)
-            self.map_view.setHtml(html, QUrl("about:blank"))
-        except ValueError as e:  # Błąd konwersji na float
-            print(f"Błąd konwersji współrzędnych na float: {lat}, {lon} - {e}")
-            self.show_fallback_map_message(
-                f"Błąd formatu współrzędnych: {lat}, {lon}. Mapa domyślna."
-            )
-            self.init_default_map()  # Pokaż domyślną, jeśli współrzędne są złe
-        except Exception as e:  # Inne błędy
-            print(f"Błąd podczas aktualizacji mapy: {e}")
-            self.show_fallback_map_message(f"Nie można zaktualizować mapy. Błąd: {e}")
+            self.map_view.setHtml(self._get_map_html(lat_f, lon_f))
+        except ValueError:
+            print(f"Błąd współrzędnych: {lat}, {lon}")
+            self.init_default_map()
 
     def check_ip(self):
         """Metoda wywoływana po kliknięciu przycisku sprawdzenia IP"""
