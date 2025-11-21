@@ -28,10 +28,9 @@ except ImportError:
 # Konfiguracja serwisów
 CONFIG = {
     'ip_services': [
-        ("https://api.ipify.org?format=json", "json"),
+        ("http://1.1.1.1/cdn-cgi/trace", "cloudflare_trace"),  # Domyślny: Cloudflare po IP (niezawodny)
         ("https://ifconfig.me/ip", "text"),
-        ("https://icanhazip.com", "text"),
-        ("http://1.1.1.1/cdn-cgi/trace", "cloudflare_trace")  # Fallback po IP (bez DNS)
+        ("https://icanhazip.com", "text")
     ],
     'info_services': [
         "https://ipinfo.io/{ip}/json",
@@ -223,15 +222,24 @@ class IPCheckerThread(QThread):
             if conn_status is False:
                 self.error.emit("Brak połączenia z internetem. Sprawdź kabel/WiFi.")
                 return
-            elif conn_status == "DNS_ERROR":
-                # Ostrzeżenie, ale próbujemy dalej (może zadziała fallback po IP)
-                print("Wykryto problem z DNS. Próba użycia serwisów dostępnych po IP.")
+            
+            services_to_try = CONFIG['ip_services']
+            dns_error_mode = False
+
+            if conn_status == "DNS_ERROR":
+                print("⚠️ Tryb awaryjny DNS: Priorytetyzacja serwisów IP.")
+                dns_error_mode = True
+                # Przesuń serwisy z "1.1.1.1" na początek listy
+                ip_services = [s for s in services_to_try if "1.1.1.1" in s[0]]
+                other_services = [s for s in services_to_try if "1.1.1.1" not in s[0]]
+                services_to_try = ip_services + other_services
 
             ip = None
             last_error = None
             
-            for service, response_type in CONFIG['ip_services']:
+            for service, response_type in services_to_try:
                 try:
+                    print(f"Próbuję serwisu: {service}")
                     if self.is_cached('ip'):
                         ip = self.get_from_cache('ip')
                         print(f"Użyto cache dla IP: {ip}")
@@ -260,9 +268,17 @@ class IPCheckerThread(QThread):
 
             if not ip:
                 error_msg = "Nie udało się pobrać adresu IP."
-                if isinstance(last_error, requests.exceptions.ConnectionError):
+                if isinstance(last_error, requests.exceptions.ConnectionError) or dns_error_mode:
                     error_msg += " (Problem z połączeniem/DNS)"
                 self.error.emit(error_msg)
+                return
+
+            # Jeśli mamy tryb awaryjny DNS, nie próbujemy pobierać lokalizacji (bo to wymaga DNS)
+            if dns_error_mode:
+                print("Pominięto pobieranie lokalizacji z powodu awarii DNS.")
+                partial_data = self.normalize_ip_data({}, ip)
+                partial_data["error_loc"] = "Niedostępne (Awaria DNS)"
+                self.finished.emit(partial_data)
                 return
 
             info_cache_key = f"info_{ip}"
